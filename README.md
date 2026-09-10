@@ -7,7 +7,6 @@ This project implements the lab as a **modular monolith**. `Order` and `Inventor
 ## Project structure
 
 ```text
-.
 ├── backend/
 │   ├── pom.xml
 │   └── src/main/java/edu/cit/aquino/
@@ -26,12 +25,18 @@ This project implements the lab as a **modular monolith**. `Order` and `Inventor
 │           └── OrderServiceImpl.java
 ├── database/
 │   └── schema.sql
-└── frontend/
-    ├── package.json
-    └── src/
-        ├── App.jsx
-        ├── index.css
-        └── main.jsx
+├── frontend/
+│   ├── package.json
+│   └── src/
+│       ├── App.jsx
+│       ├── index.css
+│       └── main.jsx
+├── .gitignore
+├── README.md
+├── ss1.png
+├── ss2.png
+└── ss3.png
+
 ```
 
 The required package naming is `edu.cit.aquino.shop` (Order module) and `edu.cit.aquino.inventory` (Inventory module); the `@SpringBootApplication` class sits in the parent package `edu.cit.aquino` so it scans both. CORS for the Vite dev server is enabled with `@CrossOrigin(origins = "http://localhost:5173")` directly on `OrderController`.
@@ -137,47 +142,18 @@ import edu.cit.aquino.inventory.InventoryService;
 
 This prevents Order from depending on the concrete Inventory implementation. The implementation can change internally without making it part of the module's public API.
 
-## 5. Test both paths
+## 5. Network tab evidence
 
 ### Confirmed path
 
-Use `P100` and quantity `2` (or another quantity that fits the current stock). The UI should display `CONFIRMED` and the remaining inventory.
+![Confirmed order image](ss1.png)
 
 ### Rejected path
+![Rejected order image](ss2.png)
 
-Use `P300` and quantity `1`, because its seed stock is `0`. The UI should display `REJECTED` with an insufficient-stock reason.
+### Supabase db
+![Supabase db](ss3.png)
 
-You can also use `P200` with quantity `11` to exceed its seed stock of `10`.
-
-### Network tab evidence
-
-The submission requires screenshots captured from your own browser. After testing each path:
-
-1. Open DevTools → **Network**.
-2. Submit the order.
-3. Select the `orders` request.
-4. Capture the request URL/method, request payload, HTTP response, and response JSON.
-5. Add the screenshots to the repository and link them below.
-
-Suggested files:
-
-```text
-README.md
-screenshots/
-├── confirmed-network.png
-└── rejected-network.png
-```
-
-> Do not fabricate these screenshots. They need to come from the actual running application and your Supabase-backed database.
-
-## 6. Tests
-
-The backend includes unit tests for both the confirmed and rejected service paths:
-
-```bash
-cd backend
-mvn test
-```
 
 The required manual end-to-end test is: **React → HTTP → OrderService → InventoryService (in-process) → Supabase Postgres**, followed by the Network-tab screenshots described above.
 
@@ -185,14 +161,26 @@ The required manual end-to-end test is: **React → HTTP → OrderService → In
 
 ### 1. In-process integration vs. microservices
 
-In this project, Order and Inventory are separate logical modules but run inside the same Spring Boot process. Order calls the InventoryService interface directly, so the integration is a normal in-process Java method call. This gives us several things for free: there is no HTTP client configuration between the modules, no service discovery, no network timeout handling, no serialization of the method arguments and result, and no need to authenticate one internal service to another. A shared database transaction can also be coordinated much more simply because both modules participate in the same application and database connection context. The trade-off is that the modules are not independently deployable and they share the runtime and database resources.
+In this project, Order and Inventory are separate modules, but they run inside the same Spring Boot application. Order calls the `InventoryService` interface directly, so the integration is just a normal Java method call. Because they are in the same process, we don't need HTTP clients, service discovery, network timeouts, serialization, or authentication between the modules. Database transactions are also easier to handle since both modules use the same application and database context.
 
-If Inventory became a separate microservice, the direct Java call would become a network API call. We would need to add an HTTP client or messaging mechanism, request/response DTOs, service discovery or a configured service URL, authentication and authorization between services, timeout and retry policies, error handling for unavailable services, observability such as distributed tracing, and potentially distributed transaction or consistency strategies. Serialization and network latency would also become part of the design.
+The downside is that the modules cannot be deployed or scaled independently. They also share the same runtime and database resources.
 
-### 2. Why package-private InventoryServiceImpl matters
+If Inventory became a separate microservice, the Java method call would become a network API call. We would need things like HTTP clients, DTOs, service URLs, authentication, timeouts, retries, error handling, and monitoring. Network latency and serialization would also become factors. Database transactions would be more complicated because the services would no longer share the same application context.
 
-The package-private implementation enforces the intended module boundary at the Java visibility level. Order can see and depend on the `InventoryService` interface, but it cannot directly construct or reference `InventoryServiceImpl`. This keeps the implementation behind the Inventory module's public contract. If the implementation were public, Order could start depending on implementation-specific methods, fields, or behavior. That would make future refactoring harder because changes to the concrete class could break Order even when the interface contract stayed stable. The boundary is therefore not just documentation; the Java compiler helps enforce it.
+### 2. Why package-private `InventoryServiceImpl` matters
+
+Making `InventoryServiceImpl` package-private helps enforce the boundary between the modules. Order can use the `InventoryService` interface, but it cannot directly access or create `InventoryServiceImpl`.
+
+This prevents Order from becoming dependent on the implementation itself. If the implementation were public, Order could start using implementation-specific methods or behavior. That would make future changes harder because changing the implementation could break Order even if the interface stayed the same.
+
+Basically, the interface is the public contract, while the actual implementation stays inside the Inventory module. Java's access rules help enforce this instead of relying only on developers to follow the intended structure.
 
 ### 3. When to extract Inventory into a microservice
 
-I would extract Inventory when it has a strong reason to be independently deployed or scaled, such as substantially different traffic, a separate team owning it, stricter availability requirements, or a domain boundary that has become stable enough to justify operational overhead. The code would change from direct constructor injection of InventoryService to an HTTP client or messaging adapter. The Inventory API would need endpoints and DTOs, while Order would call that API rather than the in-process implementation. Configuration, authentication, retries, timeouts, observability, and failure handling would also need to be introduced. The database boundary would need reconsideration as well; ideally Inventory would own its inventory data rather than allowing another service to modify the same tables directly.
+I would extract Inventory into a microservice when there is an actual reason to do so, such as having much more traffic, needing to scale independently, having a separate team manage it, or needing different availability requirements.
+
+The direct `InventoryService` call would then be replaced with an HTTP API or messaging system. Inventory would have its own endpoints and DTOs, while Order would communicate with it through the network. We would also need authentication, timeouts, retries, monitoring, and better error handling.
+
+The database would need to be reconsidered as well. Ideally, Inventory would own its inventory data instead of allowing another service to directly modify its tables.
+
+For this project, keeping both modules in the same Spring Boot application makes more sense. We still get a clear separation between Order and Inventory without adding the extra complexity that comes with microservices.
