@@ -26,8 +26,6 @@ Modular-Monolith-Integration/
 ├── frontend/
 ├── database/
 │   └── schema.sql
-├── docs/
-│   └── evidence/
 └── README.md
 ```
 
