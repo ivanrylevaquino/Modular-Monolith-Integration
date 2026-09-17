@@ -212,7 +212,6 @@ and easy to demonstrate within the single deployable application.
 
 ## API Summary
 
-  --------------------------------------------------------------------------------
   Method                  Endpoint                         Purpose
   ----------------------- -------------------------------- -----------------------
   `POST`                  `/api/orders`                    Place a multi-item
