@@ -231,8 +231,6 @@ and easy to demonstrate within the single deployable application.
                                                            notification/event log
   --------------------------------------------------------------------------------
 
-------------------------------------------------------------------------
-
 ## Network Evidence
 
 The following evidence was captured from the running React application
