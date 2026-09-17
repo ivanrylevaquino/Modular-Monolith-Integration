@@ -1,5 +1,9 @@
 package edu.cit.aquino.shop;
 
+import java.util.List;
+
 public interface OrderService {
-    OrderResult placeOrder(String productId, int quantity);
+    OrderResult placeOrder(List<OrderLineItem> items);
+    List<OrderResponse> getOrders();
+    OrderResponse cancelOrder(Long orderId);
 }
