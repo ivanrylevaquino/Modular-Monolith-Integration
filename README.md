@@ -209,7 +209,6 @@ used because asynchronous processing is unnecessary for this lab and
 synchronous listeners make the event-to-notification behavior immediate
 and easy to demonstrate within the single deployable application.
 
-------------------------------------------------------------------------
 
 ## API Summary
 
