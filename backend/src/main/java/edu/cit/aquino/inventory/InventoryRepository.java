@@ -3,6 +3,7 @@ package edu.cit.aquino.inventory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -25,10 +26,29 @@ class InventoryRepository {
         ).stream().findFirst();
     }
 
+    List<InventoryItem> findAll() {
+        return jdbcTemplate.query(
+                "SELECT product_id, name, stock FROM inventory ORDER BY product_id ASC",
+                (rs, rowNum) -> new InventoryItem(
+                        rs.getString("product_id"),
+                        rs.getString("name"),
+                        rs.getInt("stock")
+                )
+        );
+    }
+
     boolean reserve(String productId, int quantity) {
         int updated = jdbcTemplate.update(
                 "UPDATE inventory SET stock = stock - ? WHERE product_id = ? AND stock >= ?",
                 quantity, productId, quantity
+        );
+        return updated == 1;
+    }
+
+    boolean restock(String productId, int quantity) {
+        int updated = jdbcTemplate.update(
+                "UPDATE inventory SET stock = stock + ? WHERE product_id = ?",
+                quantity, productId
         );
         return updated == 1;
     }

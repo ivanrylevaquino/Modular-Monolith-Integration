@@ -1,186 +1,372 @@
-# Modular Monolith Integration Lab — Order + Inventory
+# Modular Monolith Integration --- Lab 2
 
-**Stack:** Java 17, Spring Boot, Spring JDBC, Supabase Postgres, React, Vite.
+A single Spring Boot application implementing **Order**, **Inventory**,
+and **Notification** modules with in-process integration, shared
+Supabase PostgreSQL persistence, and in-process domain events.
 
-This project implements the lab as a **modular monolith**. `Order` and `Inventory` live inside one Spring Boot process and communicate through the `InventoryService` interface — there are no HTTP/network calls between the modules. The browser is the external client and calls `POST /api/orders` over HTTP.
+## Tech Stack
 
-## Project structure
+-   Java 21
+-   Spring Boot
+-   Spring JDBC
+-   PostgreSQL / Supabase
+-   React + Vite
+-   Maven
+-   Spring `ApplicationEventPublisher` / `@EventListener`
 
-```text
+## Project Structure
+
+``` text
+Modular-Monolith-Integration/
 ├── backend/
 │   ├── pom.xml
-│   └── src/main/java/edu/cit/aquino/
-│       ├── ShopApplication.java
-│       ├── inventory/
-│       │   ├── InventoryItem.java
-│       │   ├── InventoryRepository.java
-│       │   ├── InventoryService.java
-│       │   └── InventoryServiceImpl.java
-│       └── shop/
-│           ├── OrderController.java
-│           ├── OrderRepository.java
-│           ├── OrderRequest.java
-│           ├── OrderResult.java
-│           ├── OrderService.java
-│           └── OrderServiceImpl.java
+│   ├── mvnw
+│   ├── mvnw.cmd
+│   └── src/
+├── frontend/
 ├── database/
 │   └── schema.sql
-├── frontend/
-│   ├── package.json
-│   └── src/
-│       ├── App.jsx
-│       ├── index.css
-│       └── main.jsx
-├── .gitignore
-├── README.md
-├── ss1.png
-├── ss2.png
-└── ss3.png
-
+├── docs/
+│   └── evidence/
+└── README.md
 ```
 
-The required package naming is `edu.cit.aquino.shop` (Order module) and `edu.cit.aquino.inventory` (Inventory module); the `@SpringBootApplication` class sits in the parent package `edu.cit.aquino` so it scans both. CORS for the Vite dev server is enabled with `@CrossOrigin(origins = "http://localhost:5173")` directly on `OrderController`.
+The required module boundaries are:
 
-## 1. Create the Supabase database
-
-1. Create a free Supabase project.
-2. Open **SQL Editor**.
-3. Paste and run [`database/schema.sql`](database/schema.sql).
-4. In Supabase, click **Connect** (or **Project Settings → Database**) and copy the **Session pooler** connection string — not the "Direct connection" one. The direct host (`db.<ref>.supabase.co`) is IPv6-only and will fail to resolve on many networks (school/lab Wi-Fi, some ISPs) with an error like `could not translate host name`. The pooler host (`aws-0-<region>.pooler.supabase.com`) resolves over IPv4 everywhere. Note the pooler also uses a different username format: `postgres.<project-ref>` instead of plain `postgres`.
-
-```text
-jdbc:postgresql://aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
+``` text
+edu.cit.aquino.shop
+edu.cit.aquino.inventory
+edu.cit.aquino.notification
 ```
 
-## 2. Configure backend credentials
+`InventoryServiceImpl` remains package-private. The Order module depends
+on the Inventory module through the `InventoryService` interface rather
+than its implementation.
 
-`application.properties` reads the connection details from environment variables (`SUPABASE_DB_URL`, `SUPABASE_DB_USERNAME`, `SUPABASE_DB_PASSWORD`) — nothing real is committed. Do **not** put actual credentials back into `application.properties`.
+------------------------------------------------------------------------
 
-**Windows (cmd.exe), running via the Maven wrapper:**
+## Supabase Setup
 
-```bat
-cd backend
-set SUPABASE_DB_URL=jdbc:postgresql://aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
-set SUPABASE_DB_USERNAME=postgres.<project-ref>
-set SUPABASE_DB_PASSWORD=YOUR_PASSWORD
-mvnw.cmd spring-boot:run
+1.  Create/open the Supabase project.
+2.  Open **Connect** and select the **Session pooler** connection.
+3.  Use the database username, password, host, port, and database shown
+    by Supabase.
+4.  For Spring Boot, the PostgreSQL URL uses the JDBC prefix:
+
+``` text
+jdbc:postgresql://<pooler-host>:5432/postgres?sslmode=require
 ```
 
-`set` only applies to the current terminal session, so you'll set these each time you open a new one — or use the `run.bat` convenience script described below.
+5.  Set these environment variables before starting the backend:
 
-**macOS/Linux:**
-
-```bash
-cd backend
-export SUPABASE_DB_URL='jdbc:postgresql://aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require'
-export SUPABASE_DB_USERNAME='postgres.<project-ref>'
-export SUPABASE_DB_PASSWORD='YOUR_PASSWORD'
-./mvnw spring-boot:run
+``` text
+SUPABASE_DB_URL=jdbc:postgresql://<pooler-host>:5432/postgres?sslmode=require
+SUPABASE_DB_USERNAME=postgres.<project-ref>
+SUPABASE_DB_PASSWORD=<database-password>
 ```
 
-### Convenience launcher (local only, never committed)
+Do not commit the real password or other credentials.
 
-`backend/run.bat` sets the three environment variables and calls `mvnw.cmd spring-boot:run` in one step. It is listed in `.gitignore` — Git will not track it, so it's safe to keep your real Supabase password in that file on your own machine. Double-click it, or run:
+6.  Recreate the database from the supplied SQL script rather than
+    manually editing the Supabase tables:
 
-```bat
-cd backend
-run.bat
+``` powershell
+.\psql.exe "YOUR_CONNECTION_STRING" -f "C:\path\to\Modular-Monolith-Integration\database\schema.sql"
 ```
 
-If you ever regenerate this project from scratch, recreate `run.bat` locally with your own credentials; never remove it from `.gitignore`.
+The script recreates and seeds:
 
-## 3. Run the React frontend
+-   `inventory`
+-   `orders`
+-   `order_items`
+-   `notifications`
 
-```bash
-cd frontend
+Seed inventory:
+
+  Product               ID       Initial Stock
+  --------------------- ------ ---------------
+  Wireless Mouse        P100                25
+  Mechanical Keyboard   P200                10
+  USB-C Hub             P300                 0
+
+------------------------------------------------------------------------
+
+## Running the Backend
+
+From `backend` on Windows:
+
+``` powershell
+.\mvnw.cmd test
+.\mvnw.cmd spring-boot:run
+```
+
+The backend runs on:
+
+``` text
+http://localhost:8080
+```
+
+## Running the Frontend
+
+From `frontend`:
+
+``` powershell
 npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+The Vite development server normally runs at:
 
-The frontend sends:
+``` text
+http://localhost:5173
+```
 
-```http
-POST http://localhost:8080/api/orders
-Content-Type: application/json
+CORS is configured for the Vite development server.
 
+------------------------------------------------------------------------
+
+## Lab 2 Features
+
+### 1. Multi-item Orders
+
+`POST /api/orders`
+
+Request:
+
+``` json
 {
-  "productId": "P100",
-  "quantity": 2
+  "items": [
+    { "productId": "P100", "quantity": 9 },
+    { "productId": "P200", "quantity": 3 },
+    { "productId": "P300", "quantity": 10 }
+  ]
 }
 ```
 
-A successful response looks like:
+Every line item is validated against current stock before any
+reservation is attempted. If one line item cannot be fulfilled, the
+whole order is rejected and no inventory is reserved.
 
-```json
-{
-  "status": "CONFIRMED",
-  "reason": "Order confirmed and inventory reserved.",
-  "inventory": {
-    "productId": "P100",
-    "name": "Wireless Mouse",
-    "stock": 23
-  }
-}
+Successful orders return `CONFIRMED` and line-item outcomes of
+`RESERVED`. Rejected orders return `REJECTED` and identify
+insufficient-stock items.
+
+The backend transaction and validation-before-reservation design provide
+the all-or-nothing behavior required for the lab.
+
+### 2. Cancellation and Restock
+
+``` text
+POST /api/orders/{orderId}/cancel
 ```
 
-## 4. Required module boundary
+A confirmed order can be cancelled once. Each reserved line item's
+quantity is returned through `InventoryService.restock()`.
 
-`InventoryServiceImpl` is intentionally **package-private**:
+-   Unknown order → `404`
+-   Already cancelled → `409`
 
-```java
-@Service
-class InventoryServiceImpl implements InventoryService { ... }
+### 3. Live Inventory and Order History
+
+``` text
+GET /api/inventory
+GET /api/orders
 ```
 
-The Order module imports only:
+The frontend refreshes inventory and order history after
+order/cancellation operations.
 
-```java
-import edu.cit.aquino.inventory.InventoryService;
+### 4. Notification Events
+
+Order processing publishes domain events through Spring's
+`ApplicationEventPublisher`:
+
+``` text
+OrderPlaced
+OrderRejected
 ```
 
-This prevents Order from depending on the concrete Inventory implementation. The implementation can change internally without making it part of the module's public API.
+The Notification module consumes these events with `@EventListener` and
+writes notification records to the database.
 
-## 5. Network tab evidence
+``` text
+GET /api/notifications
+```
 
-### Confirmed path
+The Notification module only depends on the event classes. It does not
+call OrderService or InventoryService.
 
-![Confirmed order image](ss1.png)
+### 5. Low-stock Alerts
 
-### Rejected path
-![Rejected order image](ss2.png)
+After a successful reservation, if remaining stock falls below the
+configured threshold of `5`, a `LowStockEvent` is published.
 
-### Supabase db
-![Supabase db](ss3.png)
+The Notification module records a separate reorder-needed notification,
+and the frontend highlights low-stock inventory rows.
+
+### Event Processing
+
+The event listeners are **synchronous by default**. `@Async` was not
+used because asynchronous processing is unnecessary for this lab and
+synchronous listeners make the event-to-notification behavior immediate
+and easy to demonstrate within the single deployable application.
+
+------------------------------------------------------------------------
+
+## API Summary
+
+  --------------------------------------------------------------------------------
+  Method                  Endpoint                         Purpose
+  ----------------------- -------------------------------- -----------------------
+  `POST`                  `/api/orders`                    Place a multi-item
+                                                           order
+
+  `POST`                  `/api/orders/{orderId}/cancel`   Cancel and restock a
+                                                           confirmed order
+
+  `GET`                   `/api/orders`                    Retrieve order history
+
+  `GET`                   `/api/inventory`                 Retrieve current
+                                                           inventory
+
+  `GET`                   `/api/notifications`             Retrieve
+                                                           notification/event log
+  --------------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+## Network Evidence
+
+The following evidence was captured from the running React application
+with the browser's **Network** tab open.
+
+### 1. Multi-item order --- all items succeed
+
+The confirmed-order evidence shows Order #1 containing multiple line
+items:
+
+-   P100 × 9
+-   P300 × 10
+-   P200 × 3
+
+All three items show `RESERVED`, and the response/status is `CONFIRMED`.
+
+**Evidence:** 
+![Order confirmed](ss1.png)
 
 
-The required manual end-to-end test is: **React → HTTP → OrderService → InventoryService (in-process) → Supabase Postgres**, followed by the Network-tab screenshots described above.
+### 2. Multi-item order --- one item fails with no partial reservation
 
-## Reflection (300–500 words)
+The rejected-order evidence shows a multi-item cart containing:
 
-### 1. In-process integration vs. microservices
+-   P100 × 3 --- available
+-   P300 × 3 --- available
+-   P200 × 9 --- insufficient stock
 
-In this project, Order and Inventory are separate modules, but they run inside the same Spring Boot application. Order calls the `InventoryService` interface directly, so the integration is just a normal Java method call. Because they are in the same process, we don't need HTTP clients, service discovery, network timeouts, serialization, or authentication between the modules. Database transactions are also easier to handle since both modules use the same application and database context.
+The complete order is `REJECTED`, with P200 marked `INSUFFICIENT_STOCK`.
+The other items are not reserved.
 
-The downside is that the modules cannot be deployed or scaled independently. They also share the same runtime and database resources.
+**Evidence:** 
+![Order rejected because one item exceeds the stocked amount](ss2.png)
 
-If Inventory became a separate microservice, the Java method call would become a network API call. We would need things like HTTP clients, DTOs, service URLs, authentication, timeouts, retries, error handling, and monitoring. Network latency and serialization would also become factors. Database transactions would be more complicated because the services would no longer share the same application context.
+A later rejected-order response also shows the rejected order containing
+multiple line items and the insufficient-stock item:
 
-### 2. Why package-private `InventoryServiceImpl` matters
 
-Making `InventoryServiceImpl` package-private helps enforce the boundary between the modules. Order can use the `InventoryService` interface, but it cannot directly access or create `InventoryServiceImpl`.
 
-This prevents Order from becoming dependent on the implementation itself. If the implementation were public, Order could start using implementation-specific methods or behavior. That would make future changes harder because changing the implementation could break Order even if the interface stayed the same.
+### 3. Cancellation and restock
 
-Basically, the interface is the public contract, while the actual implementation stays inside the Inventory module. Java's access rules help enforce this instead of relying only on developers to follow the intended structure.
+The dashboard shows Order #5 in the `CANCELLED` state and the live
+inventory table after cancellation. The Network panel also contains the
+cancellation request and subsequent inventory/order refresh requests.
 
-### 3. When to extract Inventory into a microservice
+**Evidence:** 
+![Order cancelled, items restocked](ss3.png)
 
-I would extract Inventory into a microservice when there is an actual reason to do so, such as having much more traffic, needing to scale independently, having a separate team manage it, or needing different availability requirements.
+### 4. Notification feed --- confirmed, rejected, and low-stock events
 
-The direct `InventoryService` call would then be replaced with an HTTP API or messaging system. Inventory would have its own endpoints and DTOs, while Order would communicate with it through the network. We would also need authentication, timeouts, retries, monitoring, and better error handling.
+The Notification Feed shows:
 
-The database would need to be reconsidered as well. Ideally, Inventory would own its inventory data instead of allowing another service to directly modify its tables.
+-   a confirmed order notification,
+-   a rejected order notification, and
+-   a low-stock alert indicating that remaining stock is below the
+    threshold and reorder is needed.
 
-For this project, keeping both modules in the same Spring Boot application makes more sense. We still get a clear separation between Order and Inventory without adding the extra complexity that comes with microservices.
+**Evidence:** 
+![confirmed, rejected, and low-stock events](ss4.png)
+
+The dashboard also demonstrates the event-driven notification feed
+alongside live orders and inventory:
+
+**Additional evidence:**
+![](ss5-2.png)
+
+------------------------------------------------------------------------
+
+## Reflection
+
+### 1. Atomic multi-item orders
+
+The multi-item order flow stays atomic inside the modular monolith
+because OrderService validates every line item against current inventory
+before making any reservation calls. This prevents the common case where
+the first few products are reserved and a later product fails. The order
+operation is also transactional, so the database changes made during the
+request participate in one transaction. Because Order and Inventory run
+inside the same application and share the same database, the application
+can use normal transaction management rather than coordinating
+independent network calls. If Inventory were extracted into a separate
+microservice, a single database transaction could no longer span both
+services. I would need a distributed workflow such as a saga, with
+compensating actions such as restocking previously reserved items when a
+later reservation fails. The system would also need to handle timeouts,
+retries, duplicate messages, and partial failures.
+
+### 2. Event-driven Notification coupling
+
+Publishing an event instead of directly calling Notification reduces
+coupling between OrderService and Notification. OrderService only knows
+that an `OrderPlaced` or `OrderRejected` event exists and does not need
+to know how notifications are stored or displayed. Notification can
+subscribe to those events independently, and additional consumers could
+be added without modifying OrderService. If Notification became a
+separate microservice, the in-process Spring event mechanism would need
+to be replaced or bridged with a message broker such as RabbitMQ, Kafka,
+or another durable messaging system. The design would also need
+decisions about delivery guarantees, retries, duplicate-event handling,
+ordering, persistence, and what happens when the notification service is
+temporarily unavailable.
+
+### 3. Extracting one module
+
+If exactly one module had to be extracted first, I would choose
+Notification because it is already event-driven and has no dependency on
+OrderService or InventoryService implementations. The main change would
+be replacing the in-process `ApplicationEventPublisher`/`@EventListener`
+connection with a message broker and explicit event contracts. Order
+would publish serialized `OrderPlaced`, `OrderRejected`, and `LowStock`
+messages, while Notification would consume them independently and write
+to its own database. The frontend's notification endpoint could then
+point to the notification service or an API gateway. The Order and
+Inventory modules could remain in the original monolith while the
+notification boundary is introduced incrementally.
+
+------------------------------------------------------------------------
+
+## Submission Checklist
+
+- [x] Backend source committed
+- [x] Frontend source committed
+- [x] `database/schema.sql` committed
+- [x] README committed
+- [x] Real database credentials excluded from Git
+- [x] Four Network Evidence scenarios documented
+- [x] Screenshots placed under `docs/evidence/`
+- [x] Multi-item confirmed order tested
+- [x] Multi-item rejected/no-partial-reservation case tested
+- [x] Cancellation/restock tested
+- [x] Confirmed, rejected, and low-stock notifications visible
+- [x] `\.\mvnw.cmd test` passes
+- [x] `\.\mvnw.cmd spring-boot:run` works
+- [x] `npm run dev` works
+- [x] GitHub repository link ready for submission

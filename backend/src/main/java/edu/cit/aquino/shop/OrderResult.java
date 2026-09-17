@@ -2,4 +2,12 @@ package edu.cit.aquino.shop;
 
 import edu.cit.aquino.inventory.InventoryItem;
 
-public record OrderResult(String status, String reason, InventoryItem inventory) {}
+import java.util.List;
+
+public record OrderResult(
+        Long orderId,
+        String status,
+        String reason,
+        List<OrderItemOutcome> items,
+        List<InventoryItem> inventory
+) {}
