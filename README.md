@@ -1,18 +1,21 @@
-# Modular Monolith Integration --- Lab 2
+# Modular Monolith Integration --- Lab 2 & Lab 3
 
 A single Spring Boot application implementing **Order**, **Inventory**,
-and **Notification** modules with in-process integration, shared
-Supabase PostgreSQL persistence, and in-process domain events.
+**Notification**, and **Supplier** modules with in-process integration,
+shared Supabase PostgreSQL persistence, in-process domain events, and an
+Anti-Corruption Layer around the external LegacySupply system.
 
 ## Tech Stack
 
--   Java 21
+-   Java 21 (lab machine: Java 17 target)
 -   Spring Boot
 -   Spring JDBC
 -   PostgreSQL / Supabase
 -   React + Vite
 -   Maven
 -   Spring `ApplicationEventPublisher` / `@EventListener`
+-   Jackson XML (`jackson-dataformat-xml`) for the LegacySupply adapter
+-   `@Scheduled` background jobs (pending-order retry, delivery tracking)
 
 ## Project Structure
 
@@ -23,9 +26,16 @@ Modular-Monolith-Integration/
 │   ├── mvnw
 │   ├── mvnw.cmd
 │   └── src/
+│       └── main/java/edu/cit/aquino/
+│           ├── shop/          (Order module)
+│           ├── inventory/     (Inventory module)
+│           ├── notification/  (Notification module)
+│           └── supplier/      (Anti-Corruption Layer for LegacySupply)
 ├── frontend/
 ├── database/
 │   └── schema.sql
+├── INTEGRATION.md   (Lab 3 contract discovery + ACL documentation)
+├── REFLECTION.md    (Lab 3 self-check reflection questions)
 └── README.md
 ```
 
@@ -35,15 +45,21 @@ The required module boundaries are:
 edu.cit.aquino.shop
 edu.cit.aquino.inventory
 edu.cit.aquino.notification
+edu.cit.aquino.supplier
 ```
 
 `InventoryServiceImpl` remains package-private. The Order module depends
 on the Inventory module through the `InventoryService` interface rather
-than its implementation.
+than its implementation. The `supplier` package only exposes
+`SupplierGateway`, `SupplierOrderResult`, and `SupplierOrderStatus`
+publicly — everything LegacySupply-shaped (XML classes, the HTTP client,
+session handling) stays package-private, so `Order` and `Inventory`
+never import anything that describes LegacySupply.
 
 ------------------------------------------------------------------------
 
 ## Supabase Setup
+
 
 1.  Create/open the Supabase project.
 2.  Open **Connect** and select the **Session pooler** connection.
@@ -64,6 +80,18 @@ SUPABASE_DB_PASSWORD=<database-password>
 ```
 
 Do not commit the real password or other credentials.
+
+7.  Also set the LegacySupply partner credentials before starting the
+    backend (see `backend/.env.example` / your gitignored `run.bat`):
+
+``` text
+LS_CLIENT_ID=<your student ID>
+LS_API_KEY=<your instructor-issued API key>
+```
+
+Never commit the real API key. It is read at runtime via
+`System.getenv`/`@Value` in `LegacySupplyClient` and is not stored
+anywhere in source control.
 
 6.  Recreate the database from the supplied SQL script rather than
     manually editing the Supabase tables:
@@ -209,9 +237,11 @@ used because asynchronous processing is unnecessary for this lab and
 synchronous listeners make the event-to-notification behavior immediate
 and easy to demonstrate within the single deployable application.
 
+------------------------------------------------------------------------
 
 ## API Summary
 
+  --------------------------------------------------------------------------------
   Method                  Endpoint                         Purpose
   ----------------------- -------------------------------- -----------------------
   `POST`                  `/api/orders`                    Place a multi-item
@@ -229,71 +259,49 @@ and easy to demonstrate within the single deployable application.
                                                            notification/event log
   --------------------------------------------------------------------------------
 
-## Network Evidence
+------------------------------------------------------------------------
 
-The following evidence was captured from the running React application
-with the browser's **Network** tab open.
+## Lab 3: LegacySupply Integration
 
-### 1. Multi-item order --- all items succeed
+The `edu.cit.aquino.supplier` module is an Anti-Corruption Layer (ACL)
+that sits between the modular monolith and LegacySupply, an external
+XML-only supplier system.
 
-The confirmed-order evidence shows Order #1 containing multiple line
-items:
+-   **`SupplierGateway`** (public interface) — `orderReplenishment(productId, unitsNeeded)`.
+    Converts units to LegacySupply cases (rounding up via `PackSize`),
+    generates a unique `BuyerRef`/`X-Request-Id` per reorder, and
+    returns our own `SupplierOrderResult`/`SupplierOrderStatus` types.
+-   **`LegacySupplyClient`** (package-private) — handles XML
+    serialization, session sign-in/renewal, and talks to
+    `POST /auth/token`, `POST /purchase-orders`,
+    `GET /purchase-orders/{PoNumber}`, `GET /purchase-orders?buyerRef=`.
+-   **Resilience** — 3-second timeouts, up to 3 retry attempts with
+    backoff, idempotent via a persisted `X-Request-Id` (survives
+    retries and app restarts), and a `PendingOrderRetryJob`
+    (`@Scheduled`) that resubmits any reorder left `PENDING` after an
+    outage so nothing is lost.
+-   **Delivery tracking** — `DeliveryTrackingJob` (`@Scheduled`) polls
+    open purchase orders, maps LegacySupply status codes to our own
+    `SupplierOrderStatus` enum, and on `DELIVERED` publishes a
+    `StockReplenishedEvent` that `Inventory` listens for and restocks
+    from. `Order` and `Inventory` never call the supplier module
+    directly for this.
+-   **Auto-reorder rule** — `NotificationEventListener` reacts to
+    `Inventory`'s existing `LowStockEvent` and calls `SupplierGateway`
+    instead of just logging.
 
--   P100 × 9
--   P300 × 10
--   P200 × 3
+Full contract discovery notes (session lifetime, error codes, Qty/Uom
+conversion) are in [`INTEGRATION.md`](./INTEGRATION.md). Self-check
+reflection answers are in [`REFLECTION.md`](./REFLECTION.md).
 
-All three items show `RESERVED`, and the response/status is `CONFIRMED`.
-
-**Evidence:** 
-![Order confirmed](ss1.png)
-
-
-### 2. Multi-item order --- one item fails with no partial reservation
-
-The rejected-order evidence shows a multi-item cart containing:
-
--   P100 × 3 --- available
--   P300 × 3 --- available
--   P200 × 9 --- insufficient stock
-
-The complete order is `REJECTED`, with P200 marked `INSUFFICIENT_STOCK`.
-The other items are not reserved.
-
-**Evidence:** 
-![Order rejected because one item exceeds the stocked amount](ss2.png)
-
-A later rejected-order response also shows the rejected order containing
-multiple line items and the insufficient-stock item:
-
-
-
-### 3. Cancellation and restock
-
-The dashboard shows Order #5 in the `CANCELLED` state and the live
-inventory table after cancellation. The Network panel also contains the
-cancellation request and subsequent inventory/order refresh requests.
-
-**Evidence:** 
-![Order cancelled, items restocked](ss3.png)
-
-### 4. Notification feed --- confirmed, rejected, and low-stock events
-
-The Notification Feed shows:
-
--   a confirmed order notification,
--   a rejected order notification, and
--   a low-stock alert indicating that remaining stock is below the
-    threshold and reorder is needed.
-
-**Evidence:** 
-![confirmed, rejected, and low-stock events](ss4.png)
-
-The dashboard also demonstrates the event-driven notification feed
-alongside live orders and inventory:
-
-**Additional evidence:**
-![](ss5-2.png)
+As of this submission, LegacySupply's own `/verify` self-check page
+confirms every integration check as met for this account: 11 sign-ins,
+4 purchase orders on file, 39/39 order requests carrying `X-Request-Id`,
+0 duplicates across 6 chaos events, both outage-blocked reorders
+eventually placed, a delivered order and a cancelled order both
+observed, and 51 status polls with 0 rate-limit hits. Those scores are
+computed server-side from actual request traffic, not from anything
+claimed in this repo.
 
 ------------------------------------------------------------------------
 
@@ -349,18 +357,18 @@ notification boundary is introduced incrementally.
 
 ## Submission Checklist
 
-- [x] Backend source committed
-- [x] Frontend source committed
-- [x] `database/schema.sql` committed
-- [x] README committed
-- [x] Real database credentials excluded from Git
-- [x] Four Network Evidence scenarios documented
-- [x] Screenshots placed under `docs/evidence/`
-- [x] Multi-item confirmed order tested
-- [x] Multi-item rejected/no-partial-reservation case tested
-- [x] Cancellation/restock tested
-- [x] Confirmed, rejected, and low-stock notifications visible
-- [x] `\.\mvnw.cmd test` passes
-- [x] `\.\mvnw.cmd spring-boot:run` works
-- [x] `npm run dev` works
-- [x] GitHub repository link ready for submission
+- [x] `edu.cit.aquino.supplier` ACL module implemented
+- [x] Order/Inventory import no LegacySupply-specific types
+- [x] `supplier_orders` table with own status enum
+- [x] Timeouts, retries, idempotent `X-Request-Id`/`BuyerRef`
+- [x] `PendingOrderRetryJob` for lost reorders
+- [x] `DeliveryTrackingJob` + `StockReplenishedEvent` restock flow
+- [x] `INTEGRATION.md` (mapping table, sessions, error codes, Qty/Uom)
+- [x] `REFLECTION.md` (3 self-check questions, answered from real traffic)
+- [x] `/verify` shows all checks Met (11 sign-ins, 4 orders, 0 duplicates, 0 rate-limited)
+- [ ] `LS_API_KEY` confirmed absent from every committed file
+- [ ] `.\mvnw.cmd test` passes
+- [ ] `.\mvnw.cmd spring-boot:run` works against live LegacySupply
+- [ ] Committed on a feature branch, merged into `main`
+- [ ] Tagged `lab3-final` and pushed with `git push --tags`
+- [ ] GitHub repository link ready for submission

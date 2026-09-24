@@ -1,10 +1,14 @@
 -- Run this script in the Supabase SQL Editor or via psql.
 -- The backend connects directly to Supabase Postgres through JDBC.
 
+DROP TABLE IF EXISTS supplier_orders CASCADE;
 DROP TABLE IF EXISTS notifications CASCADE;
 DROP TABLE IF EXISTS order_items CASCADE;
 DROP TABLE IF EXISTS orders CASCADE;
 DROP TABLE IF EXISTS inventory CASCADE;
+DROP SEQUENCE IF EXISTS supplier_orders_id_seq CASCADE;
+
+CREATE SEQUENCE supplier_orders_id_seq START WITH 1 INCREMENT BY 1;
 
 CREATE TABLE inventory (
     product_id VARCHAR(20) PRIMARY KEY,
@@ -32,9 +36,23 @@ CREATE TABLE notifications (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE supplier_orders (
+    id BIGINT PRIMARY KEY DEFAULT nextval('supplier_orders_id_seq'),
+    product_id VARCHAR(20) NOT NULL REFERENCES inventory(product_id),
+    buyer_ref VARCHAR(50) NOT NULL UNIQUE,
+    request_id VARCHAR(100) NOT NULL UNIQUE,
+    po_number VARCHAR(50),
+    cases INTEGER NOT NULL CHECK (cases > 0),
+    units INTEGER NOT NULL CHECK (units > 0),
+    status VARCHAR(30) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 INSERT INTO inventory (product_id, name, stock) VALUES
     ('P100', 'Wireless Mouse', 25),
     ('P200', 'Mechanical Keyboard', 10),
     ('P300', 'USB-C Hub', 0)
 ON CONFLICT (product_id) DO UPDATE
 SET name = EXCLUDED.name, stock = EXCLUDED.stock;
+
