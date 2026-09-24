@@ -366,9 +366,9 @@ notification boundary is introduced incrementally.
 - [x] `INTEGRATION.md` (mapping table, sessions, error codes, Qty/Uom)
 - [x] `REFLECTION.md` (3 self-check questions, answered from real traffic)
 - [x] `/verify` shows all checks Met (11 sign-ins, 4 orders, 0 duplicates, 0 rate-limited)
-- [ ] `LS_API_KEY` confirmed absent from every committed file
-- [ ] `.\mvnw.cmd test` passes
-- [ ] `.\mvnw.cmd spring-boot:run` works against live LegacySupply
-- [ ] Committed on a feature branch, merged into `main`
-- [ ] Tagged `lab3-final` and pushed with `git push --tags`
-- [ ] GitHub repository link ready for submission
+- [x] `LS_API_KEY` confirmed absent from every committed file
+- [x] `.\mvnw.cmd test` passes
+- [x] `.\mvnw.cmd spring-boot:run` works against live LegacySupply
+- [x] Committed on a feature branch, merged into `main`
+- [x] Tagged `lab3-final` and pushed with `git push --tags`
+- [x] GitHub repository link ready for submission
