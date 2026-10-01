@@ -33,8 +33,7 @@ class TianggeFeedPoller {
             TianggeOrderRepository repository,
             OrderService orderService,
             InventoryService inventoryService,
-            @Autowired(required = false) SupplierGateway supplierGateway
-    ) {
+            @Autowired(required = false) SupplierGateway supplierGateway) {
         this.client = client;
         this.repository = repository;
         this.orderService = orderService;
@@ -88,7 +87,8 @@ class TianggeFeedPoller {
             // Re-affirm existing decision to Tiangge if needed
             TianggeOrderRecord rec = existing.get();
             if (rec.decision() != null && rec.shopOrderId() != null) {
-                client.sendDecision(orderId, new TianggeDecisionRequest(rec.decision(), rec.shopOrderId(), "Re-affirmed decision"));
+                client.sendDecision(orderId,
+                        new TianggeDecisionRequest(rec.decision(), rec.shopOrderId(), "Re-affirmed decision"));
             }
             return;
         }
@@ -97,7 +97,8 @@ class TianggeFeedPoller {
         String linesJson = "";
         try {
             linesJson = objectMapper.writeValueAsString(lines);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         // Check stock availability across all line items
         boolean allInStock = !lines.isEmpty() && lines.stream().allMatch(l -> {
@@ -124,38 +125,45 @@ class TianggeFeedPoller {
                         "ACCEPTED",
                         linesJson,
                         Instant.now(),
-                        Instant.now()
-                );
+                        Instant.now());
                 repository.saveOrder(record);
-                client.sendDecision(orderId, new TianggeDecisionRequest("ACCEPTED", shopOrderId, "Order confirmed and stock reserved"));
+                client.sendDecision(orderId,
+                        new TianggeDecisionRequest("ACCEPTED", shopOrderId, "Order confirmed and stock reserved"));
                 return;
             }
         }
 
-        // Insufficient stock - check if incoming purchase order from supplier exists or can be placed
-        boolean hasIncomingRestock = false;
+        // Insufficient stock - check if incoming purchase order from supplier exists or
+        // can be placed
+        boolean anyShort = false;
+        boolean allShortLinesCovered = true;
         for (TianggeOrderLine line : lines) {
             InventoryItem item = inventoryService.getItem(line.sellerSku());
             int currentStock = item != null ? item.stock() : 0;
             if (currentStock < line.qty()) {
+                anyShort = true;
+                boolean covered = false;
                 if (supplierGateway != null) {
                     if (supplierGateway.hasIncomingStock(line.sellerSku())) {
-                        hasIncomingRestock = true;
+                        covered = true;
                     } else {
-                        // Attempt auto-reorder if not already incoming
                         try {
                             int needed = Math.max(15, line.qty() - currentStock);
                             supplierGateway.orderReplenishment(line.sellerSku(), needed);
-                            hasIncomingRestock = true;
+                            covered = true;
                         } catch (Exception e) {
-                            log.warn("Could not order replenishment for product {}: {}", line.sellerSku(), e.getMessage());
+                            log.warn("Could not order replenishment for product {}: {}", line.sellerSku(),
+                                    e.getMessage());
                         }
                     }
+                }
+                if (!covered) {
+                    allShortLinesCovered = false;
                 }
             }
         }
 
-        if (hasIncomingRestock) {
+        if (anyShort && allShortLinesCovered) {
             String boId = "BO-" + orderId;
             log.info("Order {} BACKORDERED awaiting supplier delivery", orderId);
 
@@ -167,10 +175,10 @@ class TianggeFeedPoller {
                     "BACKORDERED",
                     linesJson,
                     Instant.now(),
-                    Instant.now()
-            );
+                    Instant.now());
             repository.saveOrder(record);
-            client.sendDecision(orderId, new TianggeDecisionRequest("BACKORDERED", boId, "Restock order currently in flight"));
+            client.sendDecision(orderId,
+                    new TianggeDecisionRequest("BACKORDERED", boId, "Restock order currently in flight"));
         } else {
             String rejId = "REJ-" + orderId;
             log.info("Order {} REJECTED: insufficient stock and no incoming restock", orderId);
@@ -183,10 +191,10 @@ class TianggeFeedPoller {
                     "REJECTED",
                     linesJson,
                     Instant.now(),
-                    Instant.now()
-            );
+                    Instant.now());
             repository.saveOrder(record);
-            client.sendDecision(orderId, new TianggeDecisionRequest("REJECTED", rejId, "Item out of stock and unavailable"));
+            client.sendDecision(orderId,
+                    new TianggeDecisionRequest("REJECTED", rejId, "Item out of stock and unavailable"));
         }
     }
 
