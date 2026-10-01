@@ -141,6 +141,7 @@ class OrderServiceImpl implements OrderService {
         }
 
         orderRepository.updateStatus(orderId, "CANCELLED");
+        eventPublisher.publishEvent(new OrderCancelledEvent(orderId, items));
 
         return new OrderResponse(
                 orderId,

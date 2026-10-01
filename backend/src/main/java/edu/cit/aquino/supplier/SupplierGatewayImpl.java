@@ -57,6 +57,11 @@ class SupplierGatewayImpl implements SupplierGateway {
         return submitOrderWithRetry(orderId, skuInfo.supplierSku(), cases, totalUnits, buyerRef, requestId, productId, now);
     }
 
+    @Override
+    public boolean hasIncomingStock(String productId) {
+        return repository.hasActiveOrderForProduct(productId);
+    }
+
     SupplierOrderResult submitOrderWithRetry(
             long orderId,
             String supplierSku,

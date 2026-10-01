@@ -29,21 +29,34 @@ class LegacySupplyClient {
 
     private final AtomicReference<String> sessionToken = new AtomicReference<>(null);
     private final AtomicReference<Instant> tokenExpiresAt = new AtomicReference<>(Instant.MIN);
+    private final edu.cit.aquino.AppInstance appInstance;
 
     LegacySupplyClient(
             @Value("${legacysupply.base-url:https://legacysupply.onrender.com/api/v1}") String baseUrl,
             @Value("${legacysupply.client-id:22-2068-823}") String clientId,
-            @Value("${legacysupply.api-key:}") String apiKey
+            @Value("${legacysupply.api-key:}") String apiKey,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) edu.cit.aquino.AppInstance appInstance
     ) {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.clientId = (clientId != null && !clientId.isBlank()) ? clientId : System.getenv().getOrDefault("LS_CLIENT_ID", "22-2068-823");
         String key = (apiKey != null && !apiKey.isBlank()) ? apiKey : System.getenv("LS_API_KEY");
         this.apiKey = key != null ? key : "";
+        this.appInstance = appInstance;
 
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(CONNECT_TIMEOUT)
                 .build();
         this.xmlMapper = new XmlMapper();
+    }
+
+    private HttpRequest.Builder createRequestBuilder(String path) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + path))
+                .timeout(REQUEST_TIMEOUT);
+        if (appInstance != null && appInstance.getInstanceId() != null) {
+            builder.header("X-Client-Instance", appInstance.getInstanceId());
+        }
+        return builder;
     }
 
     synchronized String getOrRenewSession(boolean forceRefresh) {
@@ -58,9 +71,7 @@ class LegacySupplyClient {
             AuthRequestXml authReq = new AuthRequestXml(clientId, apiKey);
             String requestXml = xmlMapper.writeValueAsString(authReq);
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/auth/token"))
-                    .timeout(REQUEST_TIMEOUT)
+            HttpRequest request = createRequestBuilder("/auth/token")
                     .header("Content-Type", "application/xml")
                     .header("Accept", "application/xml")
                     .POST(HttpRequest.BodyPublishers.ofString(requestXml))
@@ -90,9 +101,7 @@ class LegacySupplyClient {
     PurchaseOrderAckXml placePurchaseOrder(PurchaseOrderXml order, String requestId) {
         return executeWithSessionHandling((token) -> {
             String xmlBody = xmlMapper.writeValueAsString(order);
-            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/purchase-orders"))
-                    .timeout(REQUEST_TIMEOUT)
+            HttpRequest.Builder reqBuilder = createRequestBuilder("/purchase-orders")
                     .header("Content-Type", "application/xml")
                     .header("Accept", "application/xml")
                     .header("X-LS-Session", token)
@@ -116,9 +125,7 @@ class LegacySupplyClient {
 
     PurchaseOrderStatusXml getOrderStatus(String poNumber) {
         return executeWithSessionHandling((token) -> {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/purchase-orders/" + poNumber))
-                    .timeout(REQUEST_TIMEOUT)
+            HttpRequest request = createRequestBuilder("/purchase-orders/" + poNumber)
                     .header("Accept", "application/xml")
                     .header("X-LS-Session", token)
                     .GET()
@@ -138,9 +145,7 @@ class LegacySupplyClient {
 
     PurchaseOrderListXml getOrdersByBuyerRef(String buyerRef) {
         return executeWithSessionHandling((token) -> {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/purchase-orders?buyerRef=" + buyerRef))
-                    .timeout(REQUEST_TIMEOUT)
+            HttpRequest request = createRequestBuilder("/purchase-orders?buyerRef=" + buyerRef)
                     .header("Accept", "application/xml")
                     .header("X-LS-Session", token)
                     .GET()

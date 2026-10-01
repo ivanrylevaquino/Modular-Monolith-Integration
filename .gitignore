@@ -17,6 +17,8 @@ frontend/dist/
 !.env.example
 backend/.env
 backend/run.bat
+backend/run.sh
+run.sh
 
 # OS
 .DS_Store

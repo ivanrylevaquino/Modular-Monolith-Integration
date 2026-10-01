@@ -110,4 +110,13 @@ class SupplierOrderRepository {
                 limit
         );
     }
+
+    boolean hasActiveOrderForProduct(String productId) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM supplier_orders WHERE product_id = ? AND status IN ('PENDING', 'PLACED', 'PICKING', 'SHIPPED')",
+                Integer.class,
+                productId
+        );
+        return count != null && count > 0;
+    }
 }

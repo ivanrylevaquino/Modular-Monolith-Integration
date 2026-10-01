@@ -49,6 +49,26 @@ CREATE TABLE supplier_orders (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS tiangge_feed_state (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    last_cursor BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO tiangge_feed_state (id, last_cursor) VALUES (1, 0)
+ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS tiangge_orders (
+    order_id VARCHAR(50) PRIMARY KEY,
+    event_id VARCHAR(100),
+    decision VARCHAR(30),
+    shop_order_id VARCHAR(50),
+    status VARCHAR(30) NOT NULL,
+    lines_json TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 INSERT INTO inventory (product_id, name, stock) VALUES
     ('P100', 'Wireless Mouse', 25),
     ('P200', 'Mechanical Keyboard', 10),
