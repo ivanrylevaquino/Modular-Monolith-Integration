@@ -7,9 +7,9 @@ import edu.cit.aquino.shop.OrderCancelledEvent;
 import edu.cit.aquino.shop.OrderPlacedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
-import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -30,7 +30,7 @@ class TianggeStockSyncListener {
     private final long retryDelayMillis;
 
     private final Object lock = new Object();
-    private ScheduledFuture<?> pendingTask = null;
+    private ScheduledFuture<?> pendingTask;
     private long firstPendingTriggerNanos;
     private long changeVersion;
     private boolean syncInProgress;
@@ -53,13 +53,21 @@ class TianggeStockSyncListener {
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onOrderPlaced(OrderPlacedEvent event) {
-        log.info("Stock change detected from OrderPlacedEvent (Order #{}), triggering Tiangge stock sync", event.orderId());
+        if (TianggeContext.isTiangge()) {
+            return;
+        }
+        log.info("Stock change detected from OrderPlacedEvent (Order #{}), triggering Tiangge stock sync",
+                event.orderId());
         triggerSyncDebounced();
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onOrderCancelled(OrderCancelledEvent event) {
-        log.info("Stock change detected from OrderCancelledEvent (Order #{}), triggering Tiangge stock sync", event.orderId());
+        if (TianggeContext.isTiangge()) {
+            return;
+        }
+        log.info("Stock change detected from OrderCancelledEvent (Order #{}), triggering Tiangge stock sync",
+                event.orderId());
         triggerSyncDebounced();
     }
 

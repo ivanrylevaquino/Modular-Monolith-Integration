@@ -1,4 +1,4 @@
-# Modular Monolith Integration --- Lab 2 & Lab 3 & Lab 4
+# Modular Monolith Integration --- Lab 4
 
 A single Spring Boot application implementing **Order**, **Inventory**,
 **Notification**, and **Supplier** modules with in-process integration,

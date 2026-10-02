@@ -29,6 +29,7 @@ class TianggeFeedPoller {
     private final OrderService orderService;
     private final InventoryService inventoryService;
     private final SupplierGateway supplierGateway;
+    private final TianggeStockSyncListener stockSyncListener;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     TianggeFeedPoller(
@@ -36,11 +37,13 @@ class TianggeFeedPoller {
             TianggeOrderRepository repository,
             OrderService orderService,
             InventoryService inventoryService,
+            TianggeStockSyncListener stockSyncListener,
             @Autowired(required = false) SupplierGateway supplierGateway) {
         this.client = client;
         this.repository = repository;
         this.orderService = orderService;
         this.inventoryService = inventoryService;
+        this.stockSyncListener = stockSyncListener;
         this.supplierGateway = supplierGateway;
     }
 
@@ -62,6 +65,7 @@ class TianggeFeedPoller {
         boolean processingFailed = false;
         for (TianggeFeedEvent event : response.events()) {
             try {
+                TianggeContext.set(true);
                 if ("ORDER_PLACED".equalsIgnoreCase(event.type())) {
                     processOrderPlaced(event);
                 } else if ("ORDER_CANCELLED".equalsIgnoreCase(event.type())) {
@@ -73,6 +77,8 @@ class TianggeFeedPoller {
                 log.error("Error processing feed event #{}: {}", event.seq(), e.getMessage(), e);
                 processingFailed = true;
                 break;
+            } finally {
+                TianggeContext.clear();
             }
             currentCursor = Math.max(currentCursor, event.seq());
             repository.updateLastCursor(currentCursor);
@@ -94,6 +100,9 @@ class TianggeFeedPoller {
             if (rec.decision() != null && rec.shopOrderId() != null) {
                 client.sendDecision(orderId,
                         new TianggeDecisionRequest(rec.decision(), rec.shopOrderId(), "Re-affirmed decision"));
+                if ("ACCEPTED".equalsIgnoreCase(rec.decision())) {
+                    stockSyncListener.triggerSyncDebounced();
+                }
             }
             return;
         }
@@ -135,6 +144,7 @@ class TianggeFeedPoller {
                 repository.saveOrder(record);
                 client.sendDecision(orderId,
                         new TianggeDecisionRequest("ACCEPTED", shopOrderId, "Order confirmed and stock reserved"));
+                stockSyncListener.triggerSyncDebounced();
                 return;
             }
         }
@@ -246,5 +256,6 @@ class TianggeFeedPoller {
         // Confirm cancellation to Tiangge
         log.info("Confirming cancellation to Tiangge for order {}", orderId);
         client.sendCancellation(orderId, new TianggeCancellationRequest(true));
+        stockSyncListener.triggerSyncDebounced();
     }
 }

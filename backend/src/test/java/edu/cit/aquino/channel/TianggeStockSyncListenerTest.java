@@ -35,8 +35,8 @@ class TianggeStockSyncListenerTest {
 
         verify(client).publishStock(argThat(list ->
                 list.size() == 2 &&
-                list.get(0).sellerSku().equals("P100") && list.get(0).available() == 12 &&
-                list.get(1).sellerSku().equals("P200") && list.get(1).available() == 5
+                        list.get(0).sellerSku().equals("P100") && list.get(0).available() == 12 &&
+                        list.get(1).sellerSku().equals("P200") && list.get(1).available() == 5
         ));
     }
 
@@ -50,10 +50,22 @@ class TianggeStockSyncListenerTest {
         listener.onOrderCancelled(new OrderCancelledEvent(1L, List.of()));
         listener.onStockReplenished(new StockReplenishedEvent("P100", 10));
 
-        // Wait for debounce execution
         Thread.sleep(700);
 
         verify(client, atLeastOnce()).publishStock(anyList());
+    }
+
+    @Test
+    void skipsImmediateOrderEventSyncInsideTianggeFeedProcessing() {
+        try {
+            TianggeContext.set(true);
+            listener.onOrderPlaced(new OrderPlacedEvent(2L, List.of()));
+            listener.onOrderCancelled(new OrderCancelledEvent(2L, List.of()));
+        } finally {
+            TianggeContext.clear();
+        }
+
+        verifyNoInteractions(inventoryService, client);
     }
 
     @Test
@@ -62,9 +74,9 @@ class TianggeStockSyncListenerTest {
                 new InventoryItem("P100", "Mouse", 10)
         ));
 
-        listener.onOrderPlaced(new OrderPlacedEvent(1L, List.of()));
+        listener.onOrderPlaced(new OrderPlacedEvent(3L, List.of()));
         Thread.sleep(200);
-        listener.onOrderCancelled(new OrderCancelledEvent(1L, List.of()));
+        listener.onOrderCancelled(new OrderCancelledEvent(3L, List.of()));
         Thread.sleep(200);
         listener.onStockReplenished(new StockReplenishedEvent("P100", 5));
 
@@ -82,18 +94,18 @@ class TianggeStockSyncListenerTest {
 
         listener.syncStockNow();
         Thread.sleep(400);
-        listener.onOrderPlaced(new OrderPlacedEvent(2L, List.of()));
+        listener.onOrderPlaced(new OrderPlacedEvent(4L, List.of()));
 
         verify(client, timeout(350).times(2)).publishStock(anyList());
     }
 
     @Test
-    void retriesInsteadOfTreatingEmptyInventoryAsSuccessfulSync() throws InterruptedException {
+    void retriesInsteadOfTreatingEmptyInventoryAsSuccessfulSync() {
         when(inventoryService.getAllItems())
                 .thenReturn(List.of())
                 .thenReturn(List.of(new InventoryItem("P100", "Mouse", 10)));
 
-        listener.onOrderPlaced(new OrderPlacedEvent(3L, List.of()));
+        listener.onOrderPlaced(new OrderPlacedEvent(5L, List.of()));
 
         verify(client, timeout(2000)).publishStock(argThat(items ->
                 items.size() == 1

@@ -153,7 +153,23 @@ class LegacySupplyClient {
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 200) {
-                return xmlMapper.readValue(response.body(), PurchaseOrderListXml.class);
+                PurchaseOrderListXml list;
+                try {
+                    list = xmlMapper.readValue(response.body(), PurchaseOrderListXml.class);
+                } catch (Exception e) {
+                    list = new PurchaseOrderListXml();
+                }
+                if (list.getOrders() == null || list.getOrders().isEmpty()) {
+                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("<PoNumber>([^<]+)</PoNumber>").matcher(response.body());
+                    if (m.find()) {
+                        String po = m.group(1);
+                        PurchaseOrderAckXml fallbackAck = new PurchaseOrderAckXml();
+                        fallbackAck.setPoNumber(po);
+                        fallbackAck.setBuyerRef(buyerRef);
+                        list.setOrders(java.util.List.of(fallbackAck));
+                    }
+                }
+                return list;
             }
 
             LSErrorXml err = parseErrorXml(response.body());

@@ -10,9 +10,9 @@ import edu.cit.aquino.shop.OrderResult;
 import edu.cit.aquino.shop.OrderService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.event.TransactionPhase;
-import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.List;
 
@@ -38,11 +38,17 @@ class TianggeBackorderManager {
         this.inventoryService = inventoryService;
     }
 
-    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    @EventListener
+    @Order(2)
     public void onStockReplenished(StockReplenishedEvent event) {
         log.info("Checking backorders following supplier delivery for {} (+{} units)",
                 event.productId(), event.quantity());
-        resolveBackorders(event.productId());
+        try {
+            TianggeContext.set(true);
+            resolveBackorders(event.productId());
+        } finally {
+            TianggeContext.clear();
+        }
     }
 
     synchronized void resolveBackorders(String productId) {

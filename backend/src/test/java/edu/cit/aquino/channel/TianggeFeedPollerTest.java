@@ -26,6 +26,7 @@ class TianggeFeedPollerTest {
     private OrderService orderService;
     private InventoryService inventoryService;
     private SupplierGateway supplierGateway;
+    private TianggeStockSyncListener stockSyncListener;
     private TianggeFeedPoller poller;
 
     @BeforeEach
@@ -35,8 +36,11 @@ class TianggeFeedPollerTest {
         orderService = mock(OrderService.class);
         inventoryService = mock(InventoryService.class);
         supplierGateway = mock(SupplierGateway.class);
+        stockSyncListener = mock(TianggeStockSyncListener.class);
 
-        poller = new TianggeFeedPoller(client, repository, orderService, inventoryService, supplierGateway);
+        poller = new TianggeFeedPoller(
+                client, repository, orderService, inventoryService, stockSyncListener, supplierGateway
+        );
     }
 
     @Test
@@ -70,6 +74,7 @@ class TianggeFeedPollerTest {
         assertEquals("ACCEPTED", captor.getValue().decision());
         assertEquals("SO-501", captor.getValue().shopOrderId());
         verify(repository).updateLastCursor(11L);
+        verify(stockSyncListener).triggerSyncDebounced();
     }
 
     @Test
@@ -126,6 +131,7 @@ class TianggeFeedPollerTest {
         verify(repository).updateOrderStatus("TG-ORDER-1", "CANCELLED");
         verify(client).sendCancellation(eq("TG-ORDER-1"), argThat(r -> r.restocked()));
         verify(repository).updateLastCursor(21L);
+        verify(stockSyncListener).triggerSyncDebounced();
     }
 
     @Test
