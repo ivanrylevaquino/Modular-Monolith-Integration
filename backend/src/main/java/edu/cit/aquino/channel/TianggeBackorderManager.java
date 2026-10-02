@@ -23,25 +23,35 @@ class TianggeBackorderManager {
     private final TianggeClient client;
     private final OrderService orderService;
     private final InventoryService inventoryService;
+    private final ChannelService channelService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     TianggeBackorderManager(
             TianggeOrderRepository repository,
             TianggeClient client,
             OrderService orderService,
-            InventoryService inventoryService
+            InventoryService inventoryService,
+            ChannelService channelService
     ) {
         this.repository = repository;
         this.client = client;
         this.orderService = orderService;
         this.inventoryService = inventoryService;
+        this.channelService = channelService;
     }
 
     @EventListener
+    @org.springframework.core.annotation.Order(2)
     public void onStockReplenished(StockReplenishedEvent event) {
         log.info("Checking backorders following supplier delivery for {} (+{} units)",
                 event.productId(), event.quantity());
-        resolveBackorders(event.productId());
+        try {
+            TianggeContext.set(true);
+            resolveBackorders(event.productId());
+        } finally {
+            TianggeContext.clear();
+            channelService.syncStock();
+        }
     }
 
     synchronized void resolveBackorders(String productId) {

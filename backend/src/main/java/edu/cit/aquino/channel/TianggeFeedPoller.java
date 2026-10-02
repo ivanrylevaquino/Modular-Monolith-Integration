@@ -26,6 +26,7 @@ class TianggeFeedPoller {
     private final OrderService orderService;
     private final InventoryService inventoryService;
     private final SupplierGateway supplierGateway;
+    private final ChannelService channelService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     TianggeFeedPoller(
@@ -33,11 +34,13 @@ class TianggeFeedPoller {
             TianggeOrderRepository repository,
             OrderService orderService,
             InventoryService inventoryService,
+            ChannelService channelService,
             @Autowired(required = false) SupplierGateway supplierGateway) {
         this.client = client;
         this.repository = repository;
         this.orderService = orderService;
         this.inventoryService = inventoryService;
+        this.channelService = channelService;
         this.supplierGateway = supplierGateway;
     }
 
@@ -58,6 +61,7 @@ class TianggeFeedPoller {
         long currentCursor = cursor;
         for (TianggeFeedEvent event : response.events()) {
             try {
+                TianggeContext.set(true);
                 if ("ORDER_PLACED".equalsIgnoreCase(event.type())) {
                     processOrderPlaced(event);
                 } else if ("ORDER_CANCELLED".equalsIgnoreCase(event.type())) {
@@ -68,6 +72,7 @@ class TianggeFeedPoller {
             } catch (Exception e) {
                 log.error("Error processing feed event #{}: {}", event.seq(), e.getMessage(), e);
             } finally {
+                TianggeContext.clear();
                 currentCursor = Math.max(currentCursor, event.seq());
                 repository.updateLastCursor(currentCursor);
             }
@@ -129,6 +134,8 @@ class TianggeFeedPoller {
                 repository.saveOrder(record);
                 client.sendDecision(orderId,
                         new TianggeDecisionRequest("ACCEPTED", shopOrderId, "Order confirmed and stock reserved"));
+                // Publish updated stock immediately after Tiangge has the decision
+                channelService.syncStock();
                 return;
             }
         }
@@ -222,5 +229,7 @@ class TianggeFeedPoller {
         // Confirm cancellation to Tiangge
         log.info("Confirming cancellation to Tiangge for order {}", orderId);
         client.sendCancellation(orderId, new TianggeCancellationRequest(true));
+        // Publish updated stock immediately after confirming cancellation
+        channelService.syncStock();
     }
 }

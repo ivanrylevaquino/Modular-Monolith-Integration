@@ -19,6 +19,7 @@ class TianggeBackorderManagerTest {
     private TianggeClient client;
     private OrderService orderService;
     private InventoryService inventoryService;
+    private ChannelService channelService;
     private TianggeBackorderManager manager;
 
     @BeforeEach
@@ -27,7 +28,8 @@ class TianggeBackorderManagerTest {
         client = mock(TianggeClient.class);
         orderService = mock(OrderService.class);
         inventoryService = mock(InventoryService.class);
-        manager = new TianggeBackorderManager(repository, client, orderService, inventoryService);
+        channelService = mock(ChannelService.class);
+        manager = new TianggeBackorderManager(repository, client, orderService, inventoryService, channelService);
     }
 
     @Test
@@ -54,5 +56,6 @@ class TianggeBackorderManagerTest {
         verify(orderService).placeOrder(argThat(items -> items.size() == 1 && items.get(0).productId().equals("P300") && items.get(0).quantity() == 2));
         verify(client).sendResolution(eq("TG-BO-1"), argThat(req -> "ACCEPTED".equals(req.status())));
         verify(repository).updateOrderDecision("TG-BO-1", "ACCEPTED", "SO-701", "RESOLVED_ACCEPTED");
+        verify(channelService).syncStock();
     }
 }
