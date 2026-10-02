@@ -109,7 +109,7 @@ class TianggeClient {
     }
 
     TianggeFeedResponse getFeed(long afterCursor, int limit) {
-        try {
+        return executeWithRetry("feed", () -> {
             HttpRequest httpRequest = baseRequestBuilder("/feed?after=" + afterCursor + "&limit=" + limit)
                     .GET()
                     .build();
@@ -118,12 +118,8 @@ class TianggeClient {
             if (response.statusCode() == 200) {
                 return objectMapper.readValue(response.body(), TianggeFeedResponse.class);
             }
-            log.warn("GET /feed returned HTTP {}: {}", response.statusCode(), response.body());
-            return new TianggeFeedResponse(List.of(), afterCursor);
-        } catch (Exception e) {
-            log.warn("Failed to fetch feed (after={}): {}", afterCursor, e.getMessage());
-            return new TianggeFeedResponse(List.of(), afterCursor);
-        }
+            throw new RuntimeException("GET /feed failed with HTTP " + response.statusCode() + ": " + response.body());
+        });
     }
 
     void sendDecision(String orderId, TianggeDecisionRequest decision) {
@@ -136,12 +132,6 @@ class TianggeClient {
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 200 || response.statusCode() == 201) {
                 log.info("Tiangge order {} decision recorded: {}", orderId, decision.decision());
-                return null;
-            }
-
-            // If 409 conflict, order was already decided - safe to consider done
-            if (response.statusCode() == 409) {
-                log.warn("Tiangge order {} decision conflict (already decided): {}", orderId, response.body());
                 return null;
             }
 
@@ -161,10 +151,6 @@ class TianggeClient {
                 log.info("Tiangge order {} backorder resolution recorded: {}", orderId, resolution.status());
                 return null;
             }
-            if (response.statusCode() == 409 || response.statusCode() == 400) {
-                log.warn("Tiangge order {} resolution response: HTTP {} {}", orderId, response.statusCode(), response.body());
-                return null;
-            }
             throw new RuntimeException("Order resolution failed with HTTP " + response.statusCode() + ": " + response.body());
         });
     }
@@ -179,10 +165,6 @@ class TianggeClient {
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 200 || response.statusCode() == 204) {
                 log.info("Tiangge order {} cancellation confirmed: restocked={}", orderId, cancellation.restocked());
-                return null;
-            }
-            if (response.statusCode() == 409 || response.statusCode() == 400) {
-                log.warn("Tiangge order {} cancellation response: HTTP {} {}", orderId, response.statusCode(), response.body());
                 return null;
             }
             throw new RuntimeException("Cancellation confirm failed with HTTP " + response.statusCode() + ": " + response.body());
@@ -208,7 +190,7 @@ class TianggeClient {
             }
         }
         log.error("Tiangge {} failed after {} attempts: {}", operation, MAX_RETRIES, lastException.getMessage());
-        return null;
+        throw new IllegalStateException("Tiangge " + operation + " failed after " + MAX_RETRIES + " attempts", lastException);
     }
 
     @FunctionalInterface

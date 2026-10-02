@@ -57,7 +57,7 @@ class InventoryServiceImpl implements InventoryService {
             }
             return updated;
         }
-        return item;
+        return null;
     }
 
     @Override

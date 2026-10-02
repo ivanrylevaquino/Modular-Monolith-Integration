@@ -76,24 +76,41 @@ class SupplierGatewayImpl implements SupplierGateway {
         Exception lastException = null;
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            PurchaseOrderListXml existing;
             try {
-                // Check if order already reached LegacySupply before retrying
-                if (attempt > 1) {
-                    try {
-                        PurchaseOrderListXml existing = client.getOrdersByBuyerRef(buyerRef);
-                        if (existing != null && existing.getOrders() != null && !existing.getOrders().isEmpty()) {
-                            PurchaseOrderAckXml matched = existing.getOrders().get(0);
-                            String po = matched.getPoNumber();
-                            repository.updateStatusAndPo(orderId, SupplierOrderStatus.PLACED, po);
-                            log.info("Order #{} already placed at supplier as PO {} (verified by buyerRef)", orderId, po);
-                            return new SupplierOrderResult(orderId, productId, buyerRef, requestId, po, cases, totalUnits,
-                                    SupplierOrderStatus.PLACED, "Confirmed on LegacySupply", createdAt);
-                        }
-                    } catch (Exception ignored) {
-                        // proceed with retry attempt
-                    }
+                existing = client.getOrdersByBuyerRef(buyerRef);
+                if (existing == null || existing.getOrders() == null) {
+                    throw new IllegalStateException("LegacySupply returned an incomplete BuyerRef lookup");
+                }
+            } catch (Exception lookupException) {
+                lastException = lookupException;
+                log.warn("Could not confirm whether LegacySupply placed order #{} (buyerRef={}): {}. "
+                                + "Leaving it PENDING without retrying the purchase-order POST.",
+                        orderId, buyerRef, lookupException.getMessage());
+                break;
+            }
+
+            if (!existing.getOrders().isEmpty()) {
+                PurchaseOrderAckXml matched = existing.getOrders().stream()
+                        .filter(order -> buyerRef.equals(order.getBuyerRef()))
+                        .findFirst()
+                        .orElse(null);
+                if (matched == null || matched.getPoNumber() == null || matched.getPoNumber().isBlank()) {
+                    lastException = new IllegalStateException(
+                            "LegacySupply BuyerRef lookup returned an order without a matching reference and PO number");
+                    log.warn("BuyerRef lookup for order #{} returned an ambiguous result; leaving it PENDING.",
+                            orderId);
+                    break;
                 }
 
+                String po = matched.getPoNumber();
+                repository.updateStatusAndPo(orderId, SupplierOrderStatus.PLACED, po);
+                log.info("Order #{} already placed at supplier as PO {} (verified by buyerRef)", orderId, po);
+                return new SupplierOrderResult(orderId, productId, buyerRef, requestId, po, cases, totalUnits,
+                        SupplierOrderStatus.PLACED, "Confirmed on LegacySupply", createdAt);
+            }
+
+            try {
                 log.info("Sending order #{} to LegacySupply (attempt {}/{}, requestId={})",
                         orderId, attempt, MAX_ATTEMPTS, requestId);
                 PurchaseOrderAckXml ack = client.placePurchaseOrder(orderXml, requestId);

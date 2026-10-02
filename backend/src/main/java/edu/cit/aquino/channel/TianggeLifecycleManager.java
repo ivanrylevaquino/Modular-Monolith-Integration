@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -13,6 +14,7 @@ class TianggeLifecycleManager {
     private final TianggeOrderRepository repository;
     private final TianggeHeartbeatJob heartbeatJob;
     private final ChannelService channelService;
+    private volatile boolean initialized;
 
     TianggeLifecycleManager(
             TianggeOrderRepository repository,
@@ -26,23 +28,31 @@ class TianggeLifecycleManager {
 
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
+        initializeShop();
+    }
+
+    @Scheduled(fixedDelay = 30000, initialDelay = 30000)
+    public void retryInitialization() {
+        if (!initialized) {
+            initializeShop();
+        }
+    }
+
+    private synchronized void initializeShop() {
+        if (initialized) {
+            return;
+        }
+
         log.info("Starting Tiangge Lifecycle Initialization...");
         try {
-            // 1. Initialize DB schema
             repository.initSchema();
-
-            // 2. Send initial heartbeat to register instance as online
             heartbeatJob.sendHeartbeatNow();
-
-            // 3. Publish listings
             channelService.publishListings();
-
-            // 4. Publish initial stock
             channelService.syncStock();
-
+            initialized = true;
             log.info("Tiangge shop is now LIVE and online!");
         } catch (Exception e) {
-            log.error("Failed during Tiangge lifecycle startup: {}", e.getMessage(), e);
+            log.error("Tiangge lifecycle initialization failed; it will be retried: {}", e.getMessage(), e);
         }
     }
 }

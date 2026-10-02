@@ -53,6 +53,19 @@ class InventoryServiceImplTest {
     }
 
     @Test
+    void returnsNullWhenAtomicReservationCannotBeMade() {
+        InventoryItem itemBefore = new InventoryItem("P100", "Wireless Mouse", 1);
+        when(repository.findByProductId("P100")).thenReturn(Optional.of(itemBefore));
+        when(repository.reserve("P100", 2)).thenReturn(false);
+
+        InventoryItem result = service.reserve("P100", 2);
+
+        org.junit.jupiter.api.Assertions.assertNull(result);
+        verify(repository).reserve("P100", 2);
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
     void restocksItemSuccessfully() {
         InventoryItem itemBefore = new InventoryItem("P100", "Wireless Mouse", 20);
         InventoryItem itemAfter = new InventoryItem("P100", "Wireless Mouse", 25);

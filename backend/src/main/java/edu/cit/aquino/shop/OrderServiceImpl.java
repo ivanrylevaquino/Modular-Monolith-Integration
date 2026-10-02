@@ -95,15 +95,44 @@ class OrderServiceImpl implements OrderService {
             return result;
         }
 
-        // All items passed validation! Reserve each item sequentially
+        // All items passed validation. Conditional database updates remain authoritative
+        // because another order may reserve stock after the pre-check.
         List<OrderItemOutcome> outcomes = new ArrayList<>();
         List<InventoryItem> updatedInventory = new ArrayList<>();
+        List<OrderLineItem> reservedItems = new ArrayList<>();
 
         for (OrderLineItem item : items) {
             InventoryItem updated = inventoryService.reserve(item.productId(), item.quantity());
+            if (updated == null) {
+                for (OrderLineItem reservedItem : reservedItems) {
+                    inventoryService.restock(reservedItem.productId(), reservedItem.quantity());
+                }
+                String reason = "Requested quantity exceeds available stock for one or more items.";
+                Long orderId = orderRepository.createOrder("REJECTED", reason);
+                orderRepository.saveOrderItems(orderId, items);
+                List<OrderItemOutcome> rejectedOutcomes = items.stream()
+                        .map(line -> new OrderItemOutcome(
+                                line.productId(),
+                                line.quantity(),
+                                line.productId().equals(item.productId()) ? "INSUFFICIENT_STOCK" : "NOT_RESERVED"
+                        ))
+                        .toList();
+                OrderResult result = new OrderResult(orderId, "REJECTED", reason, rejectedOutcomes, List.of());
+                eventPublisher.publishEvent(new OrderRejectedEvent(orderId, reason, items));
+                return result;
+            }
+
+            reservedItems.add(item);
             outcomes.add(new OrderItemOutcome(item.productId(), item.quantity(), "RESERVED"));
-            if (updated != null && updatedInventory.stream().noneMatch(i -> i.productId().equals(updated.productId()))) {
+            if (updatedInventory.stream().noneMatch(i -> i.productId().equals(updated.productId()))) {
                 updatedInventory.add(updated);
+            } else {
+                for (int i = 0; i < updatedInventory.size(); i++) {
+                    if (updatedInventory.get(i).productId().equals(updated.productId())) {
+                        updatedInventory.set(i, updated);
+                        break;
+                    }
+                }
             }
         }
 

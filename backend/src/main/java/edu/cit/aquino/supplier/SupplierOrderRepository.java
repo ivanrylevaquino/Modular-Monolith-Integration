@@ -113,7 +113,7 @@ class SupplierOrderRepository {
 
     boolean hasActiveOrderForProduct(String productId) {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM supplier_orders WHERE product_id = ? AND status IN ('PENDING', 'PLACED', 'PICKING', 'SHIPPED')",
+                "SELECT COUNT(*) FROM supplier_orders WHERE product_id = ? AND status IN ('PLACED', 'PICKING', 'SHIPPED') AND po_number IS NOT NULL",
                 Integer.class,
                 productId
         );

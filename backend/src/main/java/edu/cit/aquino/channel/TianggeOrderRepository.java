@@ -52,75 +52,64 @@ class TianggeOrderRepository {
     }
 
     void initSchema() {
-        try {
-            jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS tiangge_feed_state (
-                    id INTEGER PRIMARY KEY,
-                    last_cursor BIGINT NOT NULL DEFAULT 0,
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
-            """);
+        jdbcTemplate.execute("""
+            CREATE TABLE IF NOT EXISTS tiangge_feed_state (
+                id INTEGER PRIMARY KEY,
+                last_cursor BIGINT NOT NULL DEFAULT 0,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """);
 
-            jdbcTemplate.execute("""
-                INSERT INTO tiangge_feed_state (id, last_cursor, updated_at)
-                VALUES (1, 0, NOW())
-                ON CONFLICT (id) DO NOTHING;
-            """);
+        jdbcTemplate.execute("""
+            INSERT INTO tiangge_feed_state (id, last_cursor, updated_at)
+            VALUES (1, 0, NOW())
+            ON CONFLICT (id) DO NOTHING;
+        """);
 
-            jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS tiangge_orders (
-                    order_id VARCHAR(50) PRIMARY KEY,
-                    event_id VARCHAR(100),
-                    decision VARCHAR(30),
-                    shop_order_id VARCHAR(50),
-                    status VARCHAR(30) NOT NULL,
-                    lines_json TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
-            """);
-            log.info("Initialized Tiangge channel database tables successfully");
-        } catch (Exception e) {
-            log.warn("Database init warning (may already exist or using remote DB): {}", e.getMessage());
-        }
+        jdbcTemplate.execute("""
+            CREATE TABLE IF NOT EXISTS tiangge_orders (
+                order_id VARCHAR(50) PRIMARY KEY,
+                event_id VARCHAR(100),
+                decision VARCHAR(30),
+                shop_order_id VARCHAR(50),
+                status VARCHAR(30) NOT NULL,
+                lines_json TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """);
+        log.info("Initialized Tiangge channel database tables successfully");
     }
 
     long getLastCursor() {
-        try {
-            Long cursor = jdbcTemplate.queryForObject(
-                    "SELECT last_cursor FROM tiangge_feed_state WHERE id = 1",
-                    Long.class
-            );
-            return cursor != null ? cursor : 0L;
-        } catch (Exception e) {
-            log.warn("Could not read feed cursor, falling back to 0: {}", e.getMessage());
-            return 0L;
+        Long cursor = jdbcTemplate.queryForObject(
+                "SELECT last_cursor FROM tiangge_feed_state WHERE id = 1",
+                Long.class
+        );
+        if (cursor == null) {
+            throw new IllegalStateException("Tiangge feed cursor is missing");
         }
+        return cursor;
     }
 
     void updateLastCursor(long cursor) {
-        try {
-            jdbcTemplate.update(
-                    "UPDATE tiangge_feed_state SET last_cursor = ?, updated_at = NOW() WHERE id = 1",
-                    cursor
-            );
-        } catch (Exception e) {
-            log.warn("Failed to update last cursor to {}: {}", cursor, e.getMessage());
+        int updated = jdbcTemplate.update(
+                "UPDATE tiangge_feed_state SET last_cursor = ?, updated_at = NOW() WHERE id = 1 AND last_cursor <= ?",
+                cursor,
+                cursor
+        );
+        if (updated != 1) {
+            throw new IllegalStateException("Failed to persist Tiangge feed cursor " + cursor);
         }
     }
 
     Optional<TianggeOrderRecord> findOrder(String orderId) {
-        try {
-            List<TianggeOrderRecord> list = jdbcTemplate.query(
-                    "SELECT * FROM tiangge_orders WHERE order_id = ?",
-                    orderRowMapper,
-                    orderId
-            );
-            return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
-        } catch (Exception e) {
-            log.warn("Error querying order {}: {}", orderId, e.getMessage());
-            return Optional.empty();
-        }
+        List<TianggeOrderRecord> list = jdbcTemplate.query(
+                "SELECT * FROM tiangge_orders WHERE order_id = ?",
+                orderRowMapper,
+                orderId
+        );
+        return list.isEmpty() ? Optional.empty() : Optional.of(list.get(0));
     }
 
     void saveOrder(TianggeOrderRecord order) {

@@ -4,6 +4,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -32,6 +34,7 @@ class SupplierGatewayImplTest {
         ack.setUom("CS");
         ack.setBuyerRef("RO-101");
 
+        when(client.getOrdersByBuyerRef("RO-101")).thenReturn(new PurchaseOrderListXml());
         when(client.placePurchaseOrder(any(PurchaseOrderXml.class), anyString())).thenReturn(ack);
 
         // Product P100 packSize is 12. 15 units needed -> ceil(15/12) = 2 cases = 24 units
@@ -64,18 +67,21 @@ class SupplierGatewayImplTest {
         when(client.placePurchaseOrder(any(PurchaseOrderXml.class), anyString()))
                 .thenThrow(new LegacySupplyException("Timeout", "TIMEOUT", 504))
                 .thenReturn(ack);
+        when(client.getOrdersByBuyerRef("RO-101")).thenReturn(new PurchaseOrderListXml());
 
         SupplierOrderResult result = gateway.orderReplenishment("P200", 25);
 
         assertEquals(SupplierOrderStatus.PLACED, result.status());
         assertEquals("PO-200002", result.poNumber());
         verify(client, times(2)).placePurchaseOrder(any(), any());
+        verify(client, times(2)).getOrdersByBuyerRef("RO-101");
     }
 
     @Test
     void preservesPendingStatusWhenOutagePersists() {
         when(client.placePurchaseOrder(any(PurchaseOrderXml.class), anyString()))
                 .thenThrow(new LegacySupplyException("Service unavailable", "E-SYS-99", 503));
+        when(client.getOrdersByBuyerRef("RO-101")).thenReturn(new PurchaseOrderListXml());
 
         SupplierOrderResult result = gateway.orderReplenishment("P300", 20);
 
@@ -83,7 +89,47 @@ class SupplierGatewayImplTest {
         assertEquals(SupplierOrderStatus.PENDING, result.status());
         assertNull(result.poNumber());
         verify(client, times(3)).placePurchaseOrder(any(), any());
+        verify(client, times(3)).getOrdersByBuyerRef("RO-101");
         verify(repository, never()).updateStatusAndPo(eq(101L), eq(SupplierOrderStatus.PLACED), any());
+    }
+
+    @Test
+    void doesNotRetryPostWhenBuyerRefLookupFails() {
+        when(client.placePurchaseOrder(any(PurchaseOrderXml.class), anyString()))
+                .thenThrow(new LegacySupplyException("Gateway timeout", "TIMEOUT", 504));
+        when(client.getOrdersByBuyerRef("RO-101"))
+                .thenReturn(new PurchaseOrderListXml())
+                .thenThrow(new LegacySupplyException("Lookup timeout", "TIMEOUT", 504));
+
+        SupplierOrderResult result = gateway.orderReplenishment("P100", 15);
+
+        assertEquals(SupplierOrderStatus.PENDING, result.status());
+        assertNull(result.poNumber());
+        verify(client, times(1)).placePurchaseOrder(any(), any());
+        verify(client, times(2)).getOrdersByBuyerRef("RO-101");
+        verify(repository, never()).updateStatusAndPo(eq(101L), eq(SupplierOrderStatus.PLACED), any());
+    }
+
+    @Test
+    void adoptsExistingOrderFoundByBuyerRefInsteadOfPostingAgain() {
+        PurchaseOrderAckXml existingOrder = new PurchaseOrderAckXml();
+        existingOrder.setBuyerRef("RO-101");
+        existingOrder.setPoNumber("PO-200003");
+        PurchaseOrderListXml lookupResult = new PurchaseOrderListXml();
+        lookupResult.setOrders(List.of(existingOrder));
+        when(client.placePurchaseOrder(any(PurchaseOrderXml.class), anyString()))
+                .thenThrow(new LegacySupplyException("Gateway timeout", "TIMEOUT", 504));
+        when(client.getOrdersByBuyerRef("RO-101"))
+                .thenReturn(new PurchaseOrderListXml())
+                .thenReturn(lookupResult);
+
+        SupplierOrderResult result = gateway.orderReplenishment("P100", 15);
+
+        assertEquals(SupplierOrderStatus.PLACED, result.status());
+        assertEquals("PO-200003", result.poNumber());
+        verify(client, times(1)).placePurchaseOrder(any(), any());
+        verify(client, times(2)).getOrdersByBuyerRef("RO-101");
+        verify(repository).updateStatusAndPo(101L, SupplierOrderStatus.PLACED, "PO-200003");
     }
 
     @Test

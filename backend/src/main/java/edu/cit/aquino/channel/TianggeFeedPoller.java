@@ -7,11 +7,14 @@ import edu.cit.aquino.shop.OrderLineItem;
 import edu.cit.aquino.shop.OrderResult;
 import edu.cit.aquino.shop.OrderService;
 import edu.cit.aquino.supplier.SupplierGateway;
+import edu.cit.aquino.supplier.SupplierOrderStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.List;
@@ -56,6 +59,7 @@ class TianggeFeedPoller {
         log.info("Received {} events from Tiangge feed (after={})", response.events().size(), cursor);
 
         long currentCursor = cursor;
+        boolean processingFailed = false;
         for (TianggeFeedEvent event : response.events()) {
             try {
                 if ("ORDER_PLACED".equalsIgnoreCase(event.type())) {
@@ -67,13 +71,14 @@ class TianggeFeedPoller {
                 }
             } catch (Exception e) {
                 log.error("Error processing feed event #{}: {}", event.seq(), e.getMessage(), e);
-            } finally {
-                currentCursor = Math.max(currentCursor, event.seq());
-                repository.updateLastCursor(currentCursor);
+                processingFailed = true;
+                break;
             }
+            currentCursor = Math.max(currentCursor, event.seq());
+            repository.updateLastCursor(currentCursor);
         }
 
-        if (response.nextCursor() != null && response.nextCursor() > currentCursor) {
+        if (!processingFailed && response.nextCursor() != null && response.nextCursor() > currentCursor) {
             repository.updateLastCursor(response.nextCursor());
         }
     }
@@ -94,10 +99,11 @@ class TianggeFeedPoller {
         }
 
         List<TianggeOrderLine> lines = event.lines() != null ? event.lines() : List.of();
-        String linesJson = "";
+        String linesJson;
         try {
             linesJson = objectMapper.writeValueAsString(lines);
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not serialize Tiangge order lines for " + orderId, e);
         }
 
         // Check stock availability across all line items
@@ -142,22 +148,7 @@ class TianggeFeedPoller {
             int currentStock = item != null ? item.stock() : 0;
             if (currentStock < line.qty()) {
                 anyShort = true;
-                boolean covered = false;
-                if (supplierGateway != null) {
-                    if (supplierGateway.hasIncomingStock(line.sellerSku())) {
-                        covered = true;
-                    } else {
-                        try {
-                            int needed = Math.max(15, line.qty() - currentStock);
-                            supplierGateway.orderReplenishment(line.sellerSku(), needed);
-                            covered = true;
-                        } catch (Exception e) {
-                            log.warn("Could not order replenishment for product {}: {}", line.sellerSku(),
-                                    e.getMessage());
-                        }
-                    }
-                }
-                if (!covered) {
+                if (!hasConfirmedOpenPurchaseOrder(line.sellerSku(), currentStock, line.qty())) {
                     allShortLinesCovered = false;
                 }
             }
@@ -198,6 +189,32 @@ class TianggeFeedPoller {
         }
     }
 
+    private boolean hasConfirmedOpenPurchaseOrder(String productId, int currentStock, int requestedQuantity) {
+        if (supplierGateway == null) {
+            return false;
+        }
+
+        try {
+            if (supplierGateway.hasIncomingStock(productId)) {
+                return true;
+            }
+
+            int needed = Math.max(15, requestedQuantity - currentStock);
+            var replenishment = supplierGateway.orderReplenishment(productId, needed);
+            return replenishment != null
+                    && replenishment.poNumber() != null
+                    && !replenishment.poNumber().isBlank()
+                    && switch (replenishment.status()) {
+                        case PLACED, PICKING, SHIPPED -> true;
+                        default -> false;
+                    };
+        } catch (Exception e) {
+            log.warn("Could not confirm an open supplier purchase order for product {}: {}",
+                    productId, e.getMessage());
+            return false;
+        }
+    }
+
     private void processOrderCancelled(TianggeFeedEvent event) {
         String orderId = event.orderId();
         Optional<TianggeOrderRecord> existing = repository.findOrder(orderId);
@@ -205,18 +222,25 @@ class TianggeFeedPoller {
         if (existing.isPresent()) {
             TianggeOrderRecord record = existing.get();
             if ("ACCEPTED".equalsIgnoreCase(record.status()) && record.shopOrderId() != null) {
-                try {
-                    String shopIdStr = record.shopOrderId().replaceAll("[^0-9]", "");
-                    if (!shopIdStr.isBlank()) {
-                        long shopOrderId = Long.parseLong(shopIdStr);
-                        log.info("Cancelling shop order #{} for Tiangge cancellation {}", shopOrderId, orderId);
-                        orderService.cancelOrder(shopOrderId);
-                    }
-                } catch (Exception e) {
-                    log.warn("Could not cancel internal order for {}: {}", orderId, e.getMessage());
+                String shopIdStr = record.shopOrderId().replaceAll("[^0-9]", "");
+                if (shopIdStr.isBlank()) {
+                    throw new IllegalStateException("Invalid internal order ID for Tiangge order " + orderId);
                 }
+                long shopOrderId = Long.parseLong(shopIdStr);
+                log.info("Cancelling shop order #{} for Tiangge cancellation {}", shopOrderId, orderId);
+                try {
+                    orderService.cancelOrder(shopOrderId);
+                } catch (ResponseStatusException e) {
+                    if (e.getStatusCode() != HttpStatus.CONFLICT) {
+                        throw e;
+                    }
+                }
+            } else if (!"CANCELLED".equalsIgnoreCase(record.status())) {
+                throw new IllegalStateException("Cannot confirm Tiangge cancellation for unaccepted order " + orderId);
             }
             repository.updateOrderStatus(orderId, "CANCELLED");
+        } else {
+            throw new IllegalStateException("Tiangge cancellation arrived before its order was recorded: " + orderId);
         }
 
         // Confirm cancellation to Tiangge

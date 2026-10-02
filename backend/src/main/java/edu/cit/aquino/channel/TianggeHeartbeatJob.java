@@ -29,25 +29,25 @@ class TianggeHeartbeatJob {
 
     @Scheduled(fixedDelay = 30000, initialDelay = 15000)
     public void sendHeartbeat() {
-        sendHeartbeatNow();
+        try {
+            sendHeartbeatNow();
+        } catch (Exception e) {
+            log.warn("Failed to send Tiangge heartbeat: {}", e.getMessage(), e);
+        }
     }
 
     void sendHeartbeatNow() {
-        try {
-            String startedAtIso = DateTimeFormatter.ISO_INSTANT.format(appInstance.getStartedAt());
-            TianggeHeartbeatRequest req = new TianggeHeartbeatRequest(
-                    appName,
-                    startedAtIso,
-                    appInstance.getUptimeSeconds()
-            );
+        String startedAtIso = DateTimeFormatter.ISO_INSTANT.format(appInstance.getStartedAt());
+        TianggeHeartbeatRequest req = new TianggeHeartbeatRequest(
+                appName,
+                startedAtIso,
+                appInstance.getUptimeSeconds()
+        );
 
-            TianggeHeartbeatResponse resp = client.sendHeartbeat(req);
-            if (resp != null) {
-                log.info("Tiangge heartbeat acknowledged at serverTime: {}, next in: {}s",
-                        resp.serverTime(), resp.nextHeartbeatSeconds());
-            }
-        } catch (Exception e) {
-            log.warn("Failed to send Tiangge heartbeat: {}", e.getMessage());
+        TianggeHeartbeatResponse resp = client.sendHeartbeat(req);
+        if (resp != null) {
+            log.info("Tiangge heartbeat acknowledged at serverTime: {}, next in: {}s",
+                    resp.serverTime(), resp.nextHeartbeatSeconds());
         }
     }
 }

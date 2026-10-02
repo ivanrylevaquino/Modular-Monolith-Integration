@@ -82,6 +82,28 @@ class OrderServiceImplTest {
     }
 
     @Test
+    void rollsBackEarlierReservationsWhenConcurrentOrderTakesRemainingStock() {
+        when(inventory.getItem("P100")).thenReturn(new InventoryItem("P100", "Wireless Mouse", 5));
+        when(inventory.getItem("P200")).thenReturn(new InventoryItem("P200", "Mechanical Keyboard", 2));
+        when(inventory.reserve("P100", 2)).thenReturn(new InventoryItem("P100", "Wireless Mouse", 3));
+        when(inventory.reserve("P200", 1)).thenReturn(null);
+        when(orders.createOrder(eq("REJECTED"), anyString())).thenReturn(103L);
+
+        List<OrderLineItem> items = List.of(
+                new OrderLineItem("P100", 2),
+                new OrderLineItem("P200", 1)
+        );
+
+        OrderResult result = service.placeOrder(items);
+
+        assertEquals("REJECTED", result.status());
+        verify(inventory).restock("P100", 2);
+        verify(orders).createOrder(eq("REJECTED"), contains("exceeds available stock"));
+        verify(eventPublisher).publishEvent(any(OrderRejectedEvent.class));
+        verify(eventPublisher, never()).publishEvent(any(OrderPlacedEvent.class));
+    }
+
+    @Test
     void cancelsConfirmedOrderAndRestocksAllItems() {
         Long orderId = 201L;
         OrderRepository.OrderRecord record = new OrderRepository.OrderRecord(orderId, "CONFIRMED", "Order confirmed", OffsetDateTime.now());
